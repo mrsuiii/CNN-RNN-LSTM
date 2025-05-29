@@ -364,32 +364,39 @@ def main():
         traceback.print_exc()
         print("Pastikan nama layer di Keras (lihat output model.summary()), struktur H5, dan konfigurasi NUM_RECURRENT_LAYERS sudah benar.")
         scratch_classifier = None # Invalidate classifier if loading fails
-
     # --- 4. Inferensi dan Perbandingan ---
     if scratch_classifier:
-        print("\nMelakukan inferensi dengan model scratch...")
+        print("\nMelakukan inferensi dengan model scratch (batch processing)...")
         keras_embedding_matrix = keras_model.get_layer(expected_keras_embedding_layer_name).get_weights()[0]
         
-        embedded_test_data = keras_embedding_matrix[test_padded] 
+        embedded_test_data = keras_embedding_matrix[test_padded]  # Shape: (num_test_samples, MAX_LENGTH, EMBEDDING_DIM)
         
-        # Pastikan Value class bisa handle 3D array untuk sequence atau batch of sequences
-        # Jika Value dirancang untuk satu item data, loop mungkin diperlukan atau Value diadaptasi
-        # Asumsi: Value(data) dimana data adalah [batch_size, max_length, embedding_dim]
-        # dan __call__ dari StackedSequenceClassifier menangani ini dengan benar.
         scratch_predictions_list = []
         num_test_samples = embedded_test_data.shape[0]
-        print(f"Memproses {num_test_samples} sampel uji dengan model scratch...")
-        for i in range(num_test_samples):
-            if (i + 1) % 100 == 0 or i == num_test_samples -1 : # Print progress
-                 print(f"  Sampel scratch ke-{i+1}/{num_test_samples}")
-            single_sample_embedded = embedded_test_data[i:i+1] # Keep as (1, max_length, embedding_dim)
-            scratch_input_sequence = Value(single_sample_embedded) # Wrap single sample
-            
-            # Jika __call__ mengembalikan Value object dengan .data berisi numpy array
-            prediction_value = scratch_classifier(scratch_input_sequence)
-            scratch_predictions_list.append(prediction_value.data[0]) # Ambil output untuk sampel tunggal
+        
+        print(f"Memproses {num_test_samples} sampel uji dengan model scratch menggunakan BATCH_SIZE={BATCH_SIZE}...")
 
-        scratch_predictions_proba = np.array(scratch_predictions_list)
+        for i in range(0, num_test_samples, BATCH_SIZE):
+            batch_embedded_data = embedded_test_data[i:i+BATCH_SIZE] # Shape: (current_batch_size, MAX_LENGTH, EMBEDDING_DIM)
+            
+            # Ensure batch_embedded_data is always 3D, even if it's the last smaller batch
+            if batch_embedded_data.ndim == 2: # Should not happen if embedded_test_data is 3D and slicing is correct
+                batch_embedded_data = np.expand_dims(batch_embedded_data, axis=0)
+            
+            scratch_input_batch_sequence = Value(batch_embedded_data) 
+            
+            # __call__ dari StackedSequenceClassifier sekarang mengharapkan input batch
+            # dan mengembalikan output batch
+            prediction_batch_value = scratch_classifier(scratch_input_batch_sequence)
+            
+            # prediction_batch_value.data akan memiliki shape (current_batch_size, NUM_CLASSES)
+            scratch_predictions_list.append(prediction_batch_value.data)
+            
+            if (i // BATCH_SIZE + 1) % 10 == 0 or (i + BATCH_SIZE) >= num_test_samples: # Print progress per 10 batches or at the end
+                 print(f"  Batch ke-{i // BATCH_SIZE + 1}/{(num_test_samples + BATCH_SIZE - 1) // BATCH_SIZE} diproses.")
+
+        # Menggabungkan hasil prediksi dari semua batch
+        scratch_predictions_proba = np.concatenate(scratch_predictions_list, axis=0)
         scratch_predictions = np.argmax(scratch_predictions_proba, axis=1)
 
         print("\n--- Hasil Perbandingan ---")
@@ -410,8 +417,6 @@ def main():
         print(classification_report(test_labels, scratch_predictions, target_names=label_encoder.classes_, zero_division=0))
 
         # Perbandingan probabilitas
-        # Toleransi bisa disesuaikan, perbedaan kecil wajar karena floating point
-        # dan potensi perbedaan minor dalam implementasi (misal, urutan operasi di softmax)
         tolerance = 1e-4 
         if np.allclose(keras_predictions_proba, scratch_predictions_proba, atol=tolerance):
             print(f"\nSUCCESS: Output probabilitas dari Keras dan Scratch sangat mirip (toleransi={tolerance})!")
@@ -422,11 +427,11 @@ def main():
             print(f"  Perbedaan maksimum absolut: {max_diff:.6e}")
             print(f"  Perbedaan rata-rata absolut: {avg_diff:.6e}")
             print("  Probabilitas (5 sampel pertama) untuk perbandingan:")
-            for i in range(min(5, len(keras_predictions_proba))):
-                print(f"    Sampel {i}:")
-                print(f"      Keras  : {keras_predictions_proba[i]}")
-                print(f"      Scratch: {scratch_predictions_proba[i]}")
-                print(f"      Diff   : {keras_predictions_proba[i] - scratch_predictions_proba[i]}")
+            for k_idx in range(min(5, len(keras_predictions_proba))):
+                print(f"    Sampel {k_idx}:")
+                print(f"      Keras  : {keras_predictions_proba[k_idx]}")
+                print(f"      Scratch: {scratch_predictions_proba[k_idx]}")
+                print(f"      Diff   : {keras_predictions_proba[k_idx] - scratch_predictions_proba[k_idx]}")
             print("  Jika perbedaan kecil, mungkin karena presisi floating point atau perbedaan implementasi minor.")
             print("  Jika besar, periksa implementasi layer scratch (LSTM, Dense, Softmax), proses pemuatan bobot, dan urutan operasi.")
     else:

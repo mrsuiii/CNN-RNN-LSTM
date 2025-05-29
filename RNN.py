@@ -36,6 +36,7 @@ class RNN:
     def parameters(self) -> List[Value]:
         """Returns the list of parameters of the layer."""
         return [self.W_xh, self.W_hh, self.b_h]
+
     def set_weights(self, W_xh: np.ndarray, W_hh: np.ndarray, b_h: np.ndarray):
         """
         Sets the weights for the SimpleRNN layer.
@@ -57,27 +58,21 @@ class RNN:
         self.W_xh.data = W_xh
         self.W_hh.data = W_hh
         self.b_h.data = b_h.reshape(self.b_h.data.shape)
+
     def __call__(self, x_sequence: Value, h_prev: Optional[Value] = None) -> Tuple[Value, Value]:
         """
         Performs the forward pass for a sequence of inputs.
 
         Args:
-            x_sequence (Value): Input sequence of shape (batch_size, sequence_length, input_size).
-                                Note: The Value class currently handles 2D numpy arrays.
-                                For sequence processing, we'll iterate through the sequence dimension.
-                                The input for a single time step x_t should be (batch_size, input_size).
-            h_prev (Value, optional): Initial hidden state of shape (batch_size, hidden_size).
+            x_sequence (Value): Input sequence. Data shape (batch_size, sequence_length, input_size).
+            h_prev (Value, optional): Initial hidden state. Data shape (batch_size, hidden_size).
                                      Defaults to zeros if None.
 
         Returns:
             Tuple[Value, Value]:
-                - outputs (Value): Hidden states for each time step, shape (batch_size, sequence_length, hidden_size).
-                                   (Currently, this will be a list of Value objects, each for a time step's output)
-                - h_t (Value): The last hidden state, shape (batch_size, hidden_size).
+                - outputs_value (Value): Hidden states for each time step. Data shape (batch_size, sequence_length, hidden_size).
+                - h_t (Value): The last hidden state. Data shape (batch_size, hidden_size).
         """
-        # x_sequence.data is expected to be (batch_size, sequence_length, input_size)
-        # However, Value objects wrap 2D arrays. We'll iterate over sequence_length.
-
         batch_size, sequence_length, _ = x_sequence.data.shape
 
         if h_prev is None:
@@ -87,32 +82,27 @@ class RNN:
 
         for t in range(sequence_length):
             # Get input for the current time step: x_t
-            # x_t should be a Value object with data of shape (batch_size, input_size)
-            x_t = Value(x_sequence.data[:, t, :]) # Slicing numpy data and wrapping in new Value
+            # x_t data shape: (batch_size, input_size)
+            x_t_data = x_sequence.data[:, t, :]
+            if x_t_data.ndim == 1: # Ensure x_t_data is 2D for single feature input
+                x_t_data = np.atleast_2d(x_t_data)
+            if x_t_data.shape[0] != batch_size: # if batch_size is 1 and previous step made it (feature_size,)
+                 x_t_data = x_t_data.reshape(batch_size, -1)
+
+            x_t = Value(x_t_data)
+
 
             # Hidden state calculation: h_t = activation(x_t @ W_xh + h_prev @ W_hh + b_h)
             term_xh = x_t.matmul(self.W_xh)
             term_hh = h_prev.matmul(self.W_hh)
             h_t = self.activation(term_xh + term_hh + self.b_h)
 
-            outputs_list.append(h_t)
+            outputs_list.append(h_t.data) # Store numpy data for stacking
             h_prev = h_t # Update h_prev for the next time step
 
-        # To return a single Value object for all outputs, we'd need to stack them.
-        # The Value class doesn't have a direct stacking op that preserves graph for list of Values.
-        # For now, returning the list of Value objects (one per timestep) and the final hidden state.
-        # Or, more practically for now, we can concatenate the numpy data and wrap in a new Value
-        # This is tricky for autograd if not handled carefully.
-        # For a simple forward pass as requested, we can create a new Value from concatenated data.
-        # However, for backprop through time, each h_t needs to be part of the graph.
+        # Stack outputs along the sequence_length dimension
+        # outputs_list contains numpy arrays of shape (batch_size, hidden_size)
+        stacked_outputs_data = np.stack(outputs_list, axis=1) # (batch_size, sequence_length, hidden_size)
+        outputs_value = Value(stacked_outputs_data)
 
-        # Let's return the final hidden state and the list of hidden states for each step.
-        # If a single tensor output is needed for 'outputs', further modification for stacking `Value` objects
-        # or a different approach for handling sequences within `Value` would be required.
-        # For now, let's create a new Value object from the stacked numpy arrays of the outputs
-        # This is a simplification for forward pass only.
-        stacked_outputs_data = np.stack([out.data for out in outputs_list], axis=1) # (batch_size, sequence_length, hidden_size)
-        outputs_value = Value(stacked_outputs_data) # This Value won't be part of the original graph for BPTT
-
-        return outputs_value, h_t # h_t is the last hidden state from the graph
-
+        return outputs_value, h_t # h_t is the last hidden state Value object
