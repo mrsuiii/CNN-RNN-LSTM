@@ -57,6 +57,7 @@ Kode ini memerlukan library Python berikut, yang sebagian besar sudah tersedia d
 Jika ada library yang belum terinstal, Anda bisa menginstalnya di sel Colab dengan:
 ```bash
 !pip install nama_library
+```
 
 | NIM         | Nama Anggota                    | Peran/Tugas         |
 | :---------- | :-------------------------------| :------------------ |
