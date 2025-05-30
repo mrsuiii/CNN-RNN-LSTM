@@ -57,3 +57,9 @@ Kode ini memerlukan library Python berikut, yang sebagian besar sudah tersedia d
 Jika ada library yang belum terinstal, Anda bisa menginstalnya di sel Colab dengan:
 ```bash
 !pip install nama_library
+
+| NIM         | Nama Anggota                    | Peran/Tugas         |
+| :---------- | :-------------------------------| :------------------ |
+| 13522079    | Emery Fathan Zwageri            | RNN, LSTM           |
+| 13522089    | Abdul Rafi Radityo Hutomo       | CNN                 |
+| 13522097    | Ellijah Darrelshane Suryanegara | RNN, LSTM           |
